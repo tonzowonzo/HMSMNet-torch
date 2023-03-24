@@ -2,8 +2,15 @@ import os
 import random
 import numpy as np
 import torch
+import cv2
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+import scipy.signal as sig
+
+
+kx = np.array([[-1, 0, 1]])
+ky = np.array([[-1], [0], [1]])
+
 
 class MyDataset(Dataset):
     def __init__(self, root_dir, crop_size, min_disp, max_disp):
@@ -25,22 +32,18 @@ class MyDataset(Dataset):
         left_img = Image.open(left_path)
         right_img = Image.open(right_path)
 
-        # Randomly crop the input images
-        w, h = left_img.size
-        x = random.randint(0, w - self.crop_size)
-        y = random.randint(0, h - self.crop_size)
-        left_img = left_img.crop((x, y, x+self.crop_size, y+self.crop_size))
-        right_img = right_img.crop((x, y, x+self.crop_size, y+self.crop_size))
-
         # Normalize the input images
-        left_img = np.array(left_img).astype(np.float32) / 255.0
-        right_img = np.array(right_img).astype(np.float32) / 255.0
+        left_img = np.array(left_img).astype(np.float32) / 500.0 - 1.0
+        right_img = np.array(right_img).astype(np.float32) / 500.0 - 1.0
 
         # Compute the gradients of the left image
-        gy, gx = np.gradient(left_img)
-
+        bdx, bdy = sig.convolve2d(left_img[:, :], kx, 'same'), sig.convolve2d(left_img[:, :], ky, 'same')
+        left_img = left_img.astype('float32') / 500.0 - 1.0
+        dx = bdx.astype('float32') / 500.0
+        dy = bdy.astype('float32') / 500.0
+    
         # Compute the ground truth disparity map
-        disp = np.load(left_path.replace('left', 'disp'))
+        disp = Image.open(left_path.replace('left', 'disparity'))
 
         # Randomly flip the input images horizontally
         if random.random() > 0.5:
@@ -49,11 +52,11 @@ class MyDataset(Dataset):
             disp = np.fliplr(disp)
 
         # Convert numpy arrays to PyTorch tensors
-        left_tensor = torch.from_numpy(np.transpose(left_img, (2, 0, 1)))
-        right_tensor = torch.from_numpy(np.transpose(right_img, (2, 0, 1)))
-        gx_tensor = torch.from_numpy(np.expand_dims(np.transpose(gx, (1, 0)), axis=0))
-        gy_tensor = torch.from_numpy(np.expand_dims(np.transpose(gy, (1, 0)), axis=0))
-        disp_tensor = torch.from_numpy(np.expand_dims(disp, axis=0))
+        left_tensor = torch.from_numpy(np.expand_dims(left_img, axis=0).copy())
+        right_tensor = torch.from_numpy(np.expand_dims(right_img, axis=0).copy())
+        gx_tensor = torch.from_numpy(np.expand_dims(np.transpose(dx, (1, 0)), axis=0))
+        gy_tensor = torch.from_numpy(np.expand_dims(np.transpose(dy, (1, 0)), axis=0))
+        disp_tensor = torch.from_numpy(np.expand_dims(disp, axis=0).copy())
 
         return (left_tensor, right_tensor, gx_tensor, gy_tensor), disp_tensor
 
@@ -61,5 +64,3 @@ class MyDataset(Dataset):
 if __name__ == "__main__":
     train_dataset = MyDataset(root_dir='/mnt/d/whu_stereo/experimental_data/with_ground_truth/train', crop_size=512, min_disp=-128.0, max_disp=64.0)
     train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-
-    print(next(train_loader))
